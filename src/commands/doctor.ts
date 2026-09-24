@@ -22,7 +22,7 @@ import {
   type CommonOptions as FactoryCommonOptions,
 } from '../lib/client-factory.js';
 import { DEFAULT_PROFILE } from '../lib/credentials.js';
-import { loadConfig, DEFAULT_API_URL, normalizeEnvVar } from '../lib/config.js';
+import { loadConfig, DEFAULT_API_URL, normalizeEnvVar, type Config } from '../lib/config.js';
 import { ApiError, CLIError, RequestTimeoutError, localValidationError } from '../lib/errors.js';
 import type { FetchImpl } from '../lib/http.js';
 import type { CliOrgBinding, CliOrgSummary } from '../lib/org-render.js';
@@ -112,6 +112,10 @@ export async function runDoctor(opts: CommonOptions, deps: DoctorDeps = {}): Pro
   const connectivity = await checkConnectivity(opts, deps, {
     hasKey,
     endpointOk: endpointCheck.status === 'ok',
+    // Pass the already-resolved config down so the client below never re-reads
+    // the credentials file — with an ACL-bricked file a second read throws the
+    // same EPERM and surfaces as a bogus Connectivity failure.
+    config,
   });
 
   const checks: DoctorCheck[] = [
@@ -156,6 +160,7 @@ export async function runDoctor(opts: CommonOptions, deps: DoctorDeps = {}): Pro
     await checkLocalTunnel(opts, deps, {
       hasKey,
       endpointOk: endpointCheck.status === 'ok',
+      config,
     }),
   );
 
@@ -267,7 +272,7 @@ function checkSkill(cwd: string, deps: DoctorDeps): DoctorCheck {
 async function checkConnectivity(
   opts: CommonOptions,
   deps: DoctorDeps,
-  ctx: { hasKey: boolean; endpointOk: boolean },
+  ctx: { hasKey: boolean; endpointOk: boolean; config: Config },
 ): Promise<{
   check: DoctorCheck;
   v3Enabled?: boolean;
@@ -287,6 +292,7 @@ async function checkConnectivity(
       credentialsPath: deps.credentialsPath,
       fetchImpl: deps.fetchImpl,
       stderr: deps.stderr,
+      config: ctx.config,
     });
     const me = await client.get<MeIdentity>('/me');
     const who = me.userId ? ` (userId ${me.userId})` : '';
@@ -338,7 +344,7 @@ async function checkConnectivity(
 async function checkLocalTunnel(
   opts: CommonOptions,
   deps: DoctorDeps,
-  ctx: { hasKey: boolean; endpointOk: boolean },
+  ctx: { hasKey: boolean; endpointOk: boolean; config: Config },
 ): Promise<DoctorCheck> {
   const name = 'Local tunnel';
   if (opts.dryRun) return { name, status: 'warn', detail: 'skipped under --dry-run' };
@@ -358,6 +364,7 @@ async function checkLocalTunnel(
         credentialsPath: deps.credentialsPath,
         fetchImpl: deps.fetchImpl,
         stderr: deps.stderr,
+        config: ctx.config,
         // The retry sleeper listens to the client shutdown signal, so using
         // the probe deadline here bounds attempts and Retry-After sleeps as
         // one operation rather than timing each fetch independently.
